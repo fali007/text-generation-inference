@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{borrow::Cow, future::Future, net::SocketAddr, ops::Add};
 
 use futures::{future::try_join_all, TryFutureExt};
@@ -406,10 +407,9 @@ impl GenerationService for GenerationServicer {
         &self,
         _request: Request<RunningParamsInfoRequest>,
     ) -> Result<Response<RunningParamsInfoResponse>, Status> {
-        Ok(Response::new(RunningParamsInfoResponse {
-            queue_length: 10,
-            batch_size: 20,
-        }))
+        let running_params_info_response_arc = (&self).state.batcher.running_params.clone();
+
+        Ok(Response::new(Arc::try_unwrap(running_params_info_response_arc).unwrap().into_inner().expect("REASON")))
     }
 }
 

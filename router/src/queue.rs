@@ -230,6 +230,11 @@ impl<B: BatchType> Queue<B> {
         metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
     }
 
+    #[allow(dead_code)]
+    fn get_queue_length(&mut self) -> usize{
+        return self.buffer.len()
+    }
+
     /// Get the next batch without blocking.
     /// Corresponding entries are added to the entries map
     pub(crate) fn try_next_batch(

@@ -6,7 +6,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex
     },
     task::{Context, Poll},
     time::Duration,
@@ -47,7 +47,7 @@ use crate::{
         StopReason::{
             Cancelled, EosToken, Error, MaxTokens, NotFinished, StopSequence, TimeLimit, TokenLimit,
         },
-        TokenInfo,
+        TokenInfo, RunningParamsInfoResponse,
     },
     validation::RequestSize,
     ErrorResponse, GenerateRequest,
@@ -60,6 +60,7 @@ pub(crate) struct Batcher {
     sender: Sender<Vec<Entry>>,
     /// Tokenizer
     decoder: Arc<Decoder>,
+    pub running_params: Arc<Mutex<RunningParamsInfoResponse>>,
 }
 
 impl Batcher {
@@ -75,6 +76,7 @@ impl Batcher {
         // Set up queue
         let (sender, receiver) = channel(queue_size);
         let decoder = Arc::new(decoder);
+        let running_params = Arc::new(Mutex::new(RunningParamsInfoResponse { queue_length: 0, batch_size: 0 }));
 
         // Spawn batching background task that contains all the inference logic
         tokio::spawn(
@@ -84,6 +86,7 @@ impl Batcher {
                 Queue::new(config, batch_type, receiver),
                 decoder.clone(),
                 generation_health,
+                running_params.clone(),
             ))
             .catch_unwind()
             .map_err(|panic| {
@@ -92,7 +95,7 @@ impl Batcher {
             }),
         );
 
-        Self { sender, decoder }
+        Self { sender, decoder, running_params }
     }
 
     // Returns input if queue is full
@@ -401,6 +404,7 @@ async fn batching_task<B: BatchType>(
     mut queue: Queue<B>,
     decoder: Arc<Decoder>,
     generation_health: Arc<AtomicBool>,
+    running_params: Arc<Mutex<RunningParamsInfoResponse>>,
 ) {
     let mut processor = TokenProcessor {
         entries: IntMap::default(),
@@ -446,6 +450,8 @@ async fn batching_task<B: BatchType>(
                     .map(|(_, e)| e.input_length + e.generated_tokens as usize),
                 batch_size,
             );
+
+            running_params.lock().unwrap().batch_size = batch_size as u32;
 
             metrics::gauge!("tgi_batch_current_size", batch_size as f64);
             metrics::gauge!("tgi_batch_input_tokens", batch_tokens as f64);

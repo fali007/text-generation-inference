@@ -248,6 +248,6 @@ message ModelInfoResponse {
 
 message RunningParamsInfoRequest {}
 message RunningParamsInfoResponse {
-  string queue_length = 1;
-  string batch_size = 2;
+  uint32 queue_length = 1;
+  uint32 batch_size = 2;
 }

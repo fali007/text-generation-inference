@@ -24,7 +24,7 @@ use crate::{
         BatchedTokenizeResponse, DecodingMethod, GenerationResponse, ModelInfoRequest,
         ModelInfoResponse, Parameters, SingleGenerationRequest, StopReason,
         StopReason::{Cancelled, Error, TokenLimit},
-        TokenizeResponse,
+        TokenizeResponse, RunningParamsInfoRequest, RunningParamsInfoResponse,
     },
     server::ServerState,
     tokenizer::AsyncTokenizer,

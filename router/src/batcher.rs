@@ -60,6 +60,7 @@ pub(crate) struct Batcher {
     sender: Sender<Vec<Entry>>,
     /// Tokenizer
     decoder: Arc<Decoder>,
+    /// Running params
     pub running_params: Arc<Mutex<RunningParamsInfoResponse>>,
 }
 
@@ -452,6 +453,8 @@ async fn batching_task<B: BatchType>(
             );
 
             running_params.lock().unwrap().batch_size = batch_size as u32;
+
+            println!("Felix log {:?}", running_params);
 
             metrics::gauge!("tgi_batch_current_size", batch_size as f64);
             metrics::gauge!("tgi_batch_input_tokens", batch_tokens as f64);

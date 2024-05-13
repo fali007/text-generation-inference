@@ -15,6 +15,7 @@ service GenerationService {
   rpc Tokenize (BatchedTokenizeRequest) returns (BatchedTokenizeResponse) {}
   // Model info
   rpc ModelInfo (ModelInfoRequest) returns (ModelInfoResponse) {}
+  rpc RunningParamsInfo (RunningParamsInfoRequest) returns (RunningParamsInfoResponse)
 }
 
 // ============================================================================================================
@@ -243,4 +244,10 @@ message ModelInfoResponse {
   ModelKind model_kind = 1;
   uint32 max_sequence_length = 2;
   uint32 max_new_tokens = 3;
+}
+
+message RunningParamsInfoRequest {}
+message RunningParamsInfoResponse {
+  string queue_length = 1;
+  string batch_size = 2;
 }

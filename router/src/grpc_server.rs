@@ -401,6 +401,16 @@ impl GenerationService for GenerationServicer {
             max_new_tokens: self.state.max_new_tokens as u32,
         }))
     }
+
+    async fn running_params_info(
+        &self,
+        _request: Request<RunningParamsInfoRequest>,
+    ) -> Result<Response<RunningParamsInfoResponse>, Status> {
+        Ok(Response::new(RunningParamsInfoResponse {
+            queue_length: 10,
+            batch_size: 20,
+        }))
+    }
 }
 
 pub struct StreamContext {

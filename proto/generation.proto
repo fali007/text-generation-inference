@@ -15,7 +15,7 @@ service GenerationService {
   rpc Tokenize (BatchedTokenizeRequest) returns (BatchedTokenizeResponse) {}
   // Model info
   rpc ModelInfo (ModelInfoRequest) returns (ModelInfoResponse) {}
-  rpc RunningParamsInfo (RunningParamsInfoRequest) returns (RunningParamsInfoResponse)
+  rpc RunningParamsInfo (RunningParamsInfoRequest) returns (RunningParamsInfoResponse) {}
 }
 
 // ============================================================================================================

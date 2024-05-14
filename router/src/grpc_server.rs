@@ -408,9 +408,9 @@ impl GenerationService for GenerationServicer {
         _request: Request<RunningParamsInfoRequest>,
     ) -> Result<Response<RunningParamsInfoResponse>, Status> {
         let running_params_info_response_arc = (&self).state.batcher.running_params.clone();
-        println!("Felix API Request : {:?}", running_params_info_response_arc);
-
-        Ok(Response::new(Arc::try_unwrap(running_params_info_response_arc).unwrap().into_inner().expect("REASON")))
+        let m = running_params_info_response_arc.lock().unwrap();
+        println!("Felix API Request : {:?}", m);
+        Ok(Response::new(RunningParamsInfoResponse {queue_length:10, batch_size: 10}))
     }
 }
 

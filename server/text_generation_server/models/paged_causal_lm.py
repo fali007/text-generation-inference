@@ -327,11 +327,14 @@ class PagedCausalLM(Model):
             model_config.num_attention_heads,
             model_config.hidden_size,
             kv_heads=model_config.num_key_value_heads,
-            tensor_parallel_size=1,
+            tensor_parallel_size=self.engine.world_size,
             dtype=dtype,
             device=self.device,
             total_num_gpu_blocks=total_num_gpu_blocks,
         )
+
+        # log number of free blocks at init
+        print("[PagedKVCacheManager] number of free blocks: %d" % (len(self.kv_cache_manager.free_blocks)))
 
     @property
     def batch_type(self) -> Type[PagedCausalLMBatch]:

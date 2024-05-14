@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::{borrow::Cow, future::Future, net::SocketAddr, ops::Add};
 
 use futures::{future::try_join_all, TryFutureExt};
@@ -410,7 +409,7 @@ impl GenerationService for GenerationServicer {
         let running_params_info_response_arc = (&self).state.batcher.running_params.clone();
         let m = running_params_info_response_arc.lock().unwrap();
         println!("Felix API Request : {:?}", m);
-        Ok(Response::new(RunningParamsInfoResponse {queue_length:10, batch_size: 10}))
+        Ok(Response::new(RunningParamsInfoResponse {queue_length : m.queue_length, batch_size : m.batch_size}))
     }
 }
 

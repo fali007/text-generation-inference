@@ -408,7 +408,6 @@ impl GenerationService for GenerationServicer {
     ) -> Result<Response<RunningParamsInfoResponse>, Status> {
         let running_params_info_response_arc = (&self).state.batcher.running_params.clone();
         let m = running_params_info_response_arc.lock().unwrap();
-        println!("Felix API Request : {:?}", m);
         Ok(Response::new(RunningParamsInfoResponse {queue_length : m.queue_length, batch_size : m.batch_size}))
     }
 }

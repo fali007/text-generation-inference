@@ -1,8 +1,11 @@
+use crate::pb::fmaas::RunningParamsInfoResponse;
+use std::sync::Mutex;
 use std::{
     collections::{BTreeSet, VecDeque},
     mem::take,
     ops::Add,
     time::Duration,
+    sync::Arc,
 };
 
 use nohash_hasher::IntMap;
@@ -145,6 +148,7 @@ pub(crate) struct Queue<B: BatchType> {
 
     /// Just a constant empty map to reuse
     empty_map: IntMap<u64, Entry>,
+    running_params: Arc<Mutex<RunningParamsInfoResponse>>
 }
 
 impl<B: BatchType> Queue<B> {
@@ -152,6 +156,7 @@ impl<B: BatchType> Queue<B> {
         config: BatchingConfig,
         _batch_type: B,
         receiver: Receiver<Vec<Entry>>,
+        running_params: Arc<Mutex<RunningParamsInfoResponse>>,
     ) -> Self {
         Self {
             config,
@@ -162,6 +167,7 @@ impl<B: BatchType> Queue<B> {
             batch_type: _batch_type,
             last_logged: None,
             empty_map: IntMap::default(),
+            running_params: running_params,
         }
     }
 
@@ -217,6 +223,7 @@ impl<B: BatchType> Queue<B> {
         });
 
         if pruned {
+            self.running_params.lock().unwrap().queue_length = self.buffer.len() as u32;
             metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
         }
 
@@ -227,6 +234,7 @@ impl<B: BatchType> Queue<B> {
 
     fn add_to_buffer(&mut self, new_entries: Vec<Entry>) {
         self.buffer.extend(new_entries);
+        self.running_params.lock().unwrap().queue_length = self.buffer.len() as u32;
         metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
     }
 
@@ -454,6 +462,7 @@ impl<B: BatchType> Queue<B> {
             chosen_count,
         );
         metrics::gauge!("tgi_queue_size", self.buffer.len() as f64);
+        self.running_params.lock().unwrap().queue_length = self.buffer.len() as u32;
         let batch = Batch {
             id: self.next_batch_id,
             requests,

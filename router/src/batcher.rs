@@ -84,7 +84,7 @@ impl Batcher {
             std::panic::AssertUnwindSafe(batching_task(
                 client,
                 max_waiting_tokens,
-                Queue::new(config, batch_type, receiver),
+                Queue::new(config, batch_type, receiver, running_params.clone()),
                 decoder.clone(),
                 generation_health,
                 running_params.clone(),
@@ -454,7 +454,7 @@ async fn batching_task<B: BatchType>(
 
             running_params.lock().unwrap().batch_size = batch_size as u32;
 
-            println!("Felix log {:?}", running_params);
+            // println!("Felix log {:?}", running_params);
 
             metrics::gauge!("tgi_batch_current_size", batch_size as f64);
             metrics::gauge!("tgi_batch_input_tokens", batch_tokens as f64);

@@ -472,6 +472,9 @@ fn log_response(
         let time_per_token = inference_time
             .checked_div(generated_tokens)
             .unwrap_or_else(|| Duration::new(0, 0));
+        let avg_latency_per_token = (times.queued - times.end)
+            .checked_div(generated_tokens)
+            .unwrap_or_else(|| Duration::new(0, 0));
 
         // Tracing metadata
         let span = Span::current();
@@ -490,6 +493,10 @@ fn log_response(
         metrics::histogram!(
             "tgi_request_mean_time_per_token_duration",
             time_per_token.as_secs_f64()
+        );
+        metrics::histogram!(
+            "tgi_request_avg_latency_per_token_duration",
+            avg_latency_per_token.as_secs_f64()
         );
     }
 

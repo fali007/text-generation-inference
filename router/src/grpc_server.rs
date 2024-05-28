@@ -124,7 +124,7 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         let batch_size = br.requests.len();
         let kind = if batch_size == 1 { "single" } else { "batch" };
-        metrics::increment_counter!("tgi_request_count", "kind" => kind);
+        metrics::increment_counter!("tgi_request_count", "kind" => kind, "user" => br.user_id.clone());
         if batch_size == 0 {
             return Ok(Response::new(BatchedGenerationResponse {
                 responses: vec![],
@@ -137,7 +137,7 @@ impl GenerationService for GenerationServicer {
             .limit_concurrent_requests
             .try_acquire_many(batch_size as u32)
             .map_err(|_| {
-                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit");
+                metrics::increment_counter!("tgi_request_failure", "err" => "conc_limit", "user" => br.user_id.clone());
                 tracing::error!("Model is overloaded");
                 Status::resource_exhausted("Model is overloaded")
             })?;
@@ -172,6 +172,7 @@ impl GenerationService for GenerationServicer {
                         "single",
                         "Request",
                         response.request_id,
+                        br.user_id.clone(),
                     );
                     vec![response.into()]
                 })
@@ -205,6 +206,8 @@ impl GenerationService for GenerationServicer {
                                             batch_size
                                         ),
                                         r.request_id,
+                                        "none".to_string(),
+
                                     );
                                     r.into()
                                 })
@@ -217,11 +220,11 @@ impl GenerationService for GenerationServicer {
         }
         .map_err(|err| match err {
             InferError::RequestQueueFull() => {
-                metrics::increment_counter!("tgi_request_failure", "err" => "queue_full");
+                metrics::increment_counter!("tgi_request_failure", "err" => "queue_full", "user" => br.user_id.clone());
                 Status::resource_exhausted(err.to_string())
             }
             _ => {
-                metrics::increment_counter!("tgi_request_failure", "err" => "generate");
+                metrics::increment_counter!("tgi_request_failure", "err" => "generate", "user" => br.user_id.clone());
                 tracing::error!("{err}");
                 Status::from_error(Box::new(err))
             }
@@ -309,6 +312,7 @@ impl GenerationService for GenerationServicer {
                             "stream",
                             "Streaming response",
                             request_id,
+                            "none".to_string(),
                         );
                     }
                 },
@@ -462,6 +466,7 @@ fn log_response(
     kind: &'static str,
     kind_log: &str,
     request_id: Option<u64>,
+    user_id: String,
 ) {
     // Timings
     let total_time = Instant::now() - start_time;
@@ -485,27 +490,30 @@ fn log_response(
 
         metrics::histogram!(
             "tgi_request_inference_duration",
-            inference_time.as_secs_f64()
+            inference_time.as_secs_f64(),
+            "user" => user_id.clone()
         );
         metrics::histogram!(
             "tgi_request_mean_time_per_token_duration",
-            time_per_token.as_secs_f64()
+            time_per_token.as_secs_f64(),
+            "user" => user_id.clone()
         );
     }
 
     // Metrics
     match reason {
-        Error => metrics::increment_counter!("tgi_request_failure", "err" => "generate"),
+        Error => metrics::increment_counter!("tgi_request_failure", "err" => "generate", "user" => user_id),
         Cancelled => (), // recorded where cancellation is detected
         _ => {
             metrics::increment_counter!(
-                "tgi_request_success", "stop_reason" => reason.as_str_name(), "kind" => kind
+                "tgi_request_success", "stop_reason" => reason.as_str_name(), "kind" => kind, "user" => user_id.clone()
             );
-            metrics::histogram!("tgi_request_duration", total_time.as_secs_f64());
-            metrics::histogram!("tgi_request_generated_tokens", generated_tokens as f64);
+            metrics::histogram!("tgi_request_duration", total_time.as_secs_f64(), "user" => user_id.clone());
+            metrics::histogram!("tgi_request_generated_tokens", generated_tokens as f64, "user" => user_id.clone());
             metrics::histogram!(
                 "tgi_request_total_tokens",
-                (generated_tokens as usize + input_tokens) as f64
+                (generated_tokens as usize + input_tokens) as f64,
+                "user" => user_id.clone()
             );
         }
     }

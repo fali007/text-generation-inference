@@ -52,6 +52,7 @@ use crate::{
     validation::RequestSize,
     ErrorResponse, GenerateRequest,
 };
+use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram, observe_labeled_histogram, set_gauge};
 
 /// Batcher
 #[derive(Clone)]
@@ -456,9 +457,9 @@ async fn batching_task<B: BatchType>(
 
             // println!("Felix log {:?}", running_params);
 
-            metrics::gauge!("tgi_batch_current_size", batch_size as f64);
-            metrics::gauge!("tgi_batch_input_tokens", batch_tokens as f64);
-            metrics::gauge!(
+            set_gauge("tgi_batch_current_size", batch_size as f64);
+            set_gauge("tgi_batch_input_tokens", batch_tokens as f64);
+            set_gauge(
                 "tgi_batch_max_remaining_tokens",
                 batch_max_remaining_tokens.unwrap() as f64
             );
@@ -538,7 +539,7 @@ async fn batching_task<B: BatchType>(
                                     "Extending batch #{} of {} with additional batch #{} of {}",
                                     batch_id, batch_size, new_batch_id, added_batch_size
                                 );
-                                metrics::increment_counter!("tgi_batch_concatenation_count");
+                                increment_counter("tgi_batch_concatenation_count", 1);
                             }
                         } else {
                             combined_batch_id = new_batch_id;
@@ -569,9 +570,9 @@ async fn batching_task<B: BatchType>(
             }
         }
 
-        metrics::gauge!("tgi_batch_current_size", 0.0);
-        metrics::gauge!("tgi_batch_input_tokens", 0.0);
-        metrics::gauge!("tgi_batch_max_remaining_tokens", 0.0);
+        set_gauge("tgi_batch_current_size", 0.0);
+        set_gauge("tgi_batch_input_tokens", 0.0);
+        set_gauge("tgi_batch_max_remaining_tokens", 0.0);
     }
 
     info!("Batching loop exiting");
@@ -634,9 +635,9 @@ impl<'a> TokenProcessor<'a> {
         let batch_size = batch.requests.len();
         let batch_tokens = batch.total_tokens;
         let start_time = Instant::now();
-        metrics::histogram!("tgi_batch_next_tokens", batch_tokens as f64);
-        metrics::histogram!(
-            "tgi_batch_inference_batch_size", batch_size as f64, "method" => "prefill"
+        observe_histogram("tgi_batch_next_tokens", batch_tokens as f64);
+        observe_labeled_histogram(
+            "tgi_batch_inference_batch_size", &[("method", "prefill")], batch_size as f64
         );
         let (result, prefill_time) = self
             ._wrap_future(
@@ -657,8 +658,8 @@ impl<'a> TokenProcessor<'a> {
         batches: Vec<CachedBatch>,
         queue: &mut Queue<B>,
     ) -> (Option<CachedBatch>, Duration) {
-        metrics::histogram!(
-            "tgi_batch_inference_batch_size", self.entries.len() as f64, "method" => "next_token"
+        observe_labeled_histogram(
+            "tgi_batch_inference_batch_size", &[("method", "next_token")], self.entries.len() as f64
         );
         let start_time = Instant::now();
         self._wrap_future(
@@ -681,7 +682,7 @@ impl<'a> TokenProcessor<'a> {
         start_id: Option<u64>,
         queue: &mut Queue<B>,
     ) -> (Option<CachedBatch>, Duration) {
-        metrics::increment_counter!("tgi_batch_inference_count", "method" => method);
+        increment_labeled_counter("tgi_batch_inference_count", &[("method", method)], 1);
 
         // We process the shared queue while waiting for the response from the python shard(s)
         let queue_servicer = queue.service_queue().fuse();
@@ -701,27 +702,27 @@ impl<'a> TokenProcessor<'a> {
                 let completed_request_ids = self.process_next_tokens(generated_tokens, errors);
                 // Update health
                 self.generation_health.store(true, Ordering::SeqCst);
-                metrics::histogram!(
+                observe_labeled_histogram(
                     "tgi_batch_inference_duration",
+                    &[("method", method),
+                        ("makeup", "single_only")],
                     elapsed.as_secs_f64(),
-                    "method" => method,
-                    "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );
-                metrics::histogram!(
+                observe_labeled_histogram(
                     "tgi_batch_inference_forward_duration",
-                    forward_duration,
-                    "method" => method,
-                    "makeup" => "single_only", // later will possibly be beam_only or mixed
+                    &[("method", method),
+                        ("makeup", "single_only")],
+                    forward_duration.as_secs_f64(),
                 );
-                metrics::histogram!(
+                observe_labeled_histogram(
                     "tgi_batch_inference_tokproc_duration",
+                    &[("method", method),
+                        ("makeup", "single_only")],
                     pre_token_process_time.elapsed().as_secs_f64(),
-                    "method" => method,
-                    "makeup" => "single_only", // later will possibly be beam_only or mixed
                 );
                 // Probably don't need this additional counter because the duration histogram
                 // records a total count
-                metrics::increment_counter!("tgi_batch_inference_success", "method" => method);
+                increment_labeled_counter("tgi_batch_inference_success", &[("method", method)], 1);
                 Some(CachedBatch {
                     batch_id: next_batch_id,
                     status: completed_request_ids.map(|c| RequestsStatus { completed_ids: c }),
@@ -738,7 +739,7 @@ impl<'a> TokenProcessor<'a> {
                     ClientError::Connection(_) => "connection",
                     _ => "error",
                 };
-                metrics::increment_counter!("tgi_batch_inference_failure", "method" => method, "reason" => reason);
+                increment_labeled_counter("tgi_batch_inference_failure", &[("method", method), ("reason", reason)], 1);
                 self.send_errors(err, start_id);
                 None
             }
@@ -989,7 +990,7 @@ impl<'a> TokenProcessor<'a> {
                     // If receiver closed (request cancelled), cancel this entry
                     let e = self.entries.remove(&request_id).unwrap();
                     stop_reason = Cancelled;
-                    metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
+                    increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                     //TODO include request context in log message
                     warn!(
                         "Aborted streaming request {request_id} cancelled by client \
@@ -1003,7 +1004,7 @@ impl<'a> TokenProcessor<'a> {
                 // If receiver closed (request cancelled), cancel this entry
                 let e = self.entries.remove(&request_id).unwrap();
                 stop_reason = Cancelled;
-                metrics::increment_counter!("tgi_request_failure", "err" => "cancelled");
+                increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                 //TODO include request context in log message
                 warn!(
                     "Aborted request {request_id} cancelled by client \

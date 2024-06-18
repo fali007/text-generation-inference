@@ -34,6 +34,7 @@ use crate::{
 };
 use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram};
 use crate::pb::fmaas::tokenize_response::Offset;
+use serde::Deserialize;
 
 /// Whether to fail if sampling parameters are provided in greedy-mode requests
 /// or to silently ignore them.
@@ -46,6 +47,7 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send + 'static>(
     shared_state: ServerState,
     tokenizer: AsyncTokenizer,
     signal: F,
+    user_config: Option<String>,
 ) -> JoinHandle<()> {
     let mut builder = Server::builder();
 
@@ -68,6 +70,7 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send + 'static>(
     let grpc_service = GenerationServicer {
         state: shared_state,
         tokenizer,
+        user_config,
     };
     let grpc_server = builder
         .add_service(GenerationServiceServer::new(grpc_service))
@@ -91,6 +94,26 @@ async fn load_pem(path: String, name: &str) -> Vec<u8> {
 pub struct GenerationServicer {
     state: ServerState,
     tokenizer: AsyncTokenizer,
+    user_config: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct User {
+    user_id : String,
+    priority : u32,
+}
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct UserConfig {
+    pub users: Vec<User>
+}
+impl UserConfig {
+    pub fn new(json_string_option: Option<String>) -> UserConfig{
+        let json_string = json_string_option.unwrap();
+        let user_config: UserConfig = serde_json::from_str(&json_string).expect("Invalid JSON format"); //deserialize from JSON into rust data structure
+        user_config
+    }
 }
 
 #[tonic::async_trait]
@@ -116,6 +139,8 @@ impl GenerationService for GenerationServicer {
         &self,
         request: Request<BatchedGenerationRequest>,
     ) -> Result<Response<BatchedGenerationResponse>, Status> {
+        let user_config: UserConfig = UserConfig::new(self.user_config);
+        println!("{:?}", user_config);
         let start_time = Instant::now();
         let request = request.extract_context();
         let br = request.into_inner();
@@ -127,6 +152,7 @@ impl GenerationService for GenerationServicer {
                 responses: vec![],
             }));
         }
+        
         increment_counter("tgi_request_input_count", batch_size as u64);
         // Limit concurrent requests by acquiring a permit from the semaphore
         let _permit = self

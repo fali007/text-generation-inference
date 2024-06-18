@@ -255,6 +255,7 @@ pub struct ServerRunArgs {
     pub tls_client_ca_cert: Option<String>,
     pub output_special_tokens: bool,
     pub default_include_stop_seqs: bool,
+    pub user_config: Option<String>,
 }
 
 async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
@@ -463,6 +464,7 @@ async fn do_run<B: BatchType>(
         shared_state,
         tokenizers,
         async move { notify_clone.notified().await },
+        args.user_config,
     )
     .await;
 

@@ -7,6 +7,7 @@ use std::{
 
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
+use moka::ops::compute::Op;
 use opentelemetry::{
     global,
     KeyValue,
@@ -67,6 +68,8 @@ struct Args {
         default_value = "text-generation-inference.router"
     )]
     otlp_service_name: String,
+    #[clap(long, env = "USER_CONFIG", default_value = "{\"Users\":[{\"UserId\":\"Alan\",\"Priority\":1},{\"UserId\":\"Noel\",\"Priority\":2},{\"UserId\":\"Noel\",\"Priority\":3}]}")]
+    user_config: Option<String>,
 }
 
 fn main() -> Result<(), std::io::Error> {
@@ -158,6 +161,7 @@ fn main() -> Result<(), std::io::Error> {
                 tls_client_ca_cert: args.tls_client_ca_cert_path,
                 output_special_tokens: args.output_special_tokens,
                 default_include_stop_seqs: args.default_include_stop_seqs,
+                user_config: args.user_config,
             })
             .await;
             Ok(())

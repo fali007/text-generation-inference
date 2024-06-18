@@ -1,7 +1,8 @@
 use crate::pb::fmaas::RunningParamsInfoResponse;
+use std::collections::BinaryHeap;
 use std::sync::Mutex;
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::BTreeSet,
     mem::take,
     ops::Add,
     time::Duration,
@@ -33,6 +34,53 @@ use crate::metrics::{increment_counter, increment_labeled_counter, observe_histo
 // Requests that fit into the next batch can overtake others
 // that don't as long as they arrive within this amount of time after
 const CUTOFF_DURATION: Duration = Duration::from_secs(1);
+
+#[derive(Debug)]
+pub struct PriorityQueue {
+    heap: BinaryHeap<Entry>,
+}
+impl PriorityQueue {
+	pub fn new(capacity: usize) -> Self {
+		let heap = BinaryHeap::with_capacity(capacity);
+		Self{ heap }
+	}
+
+	pub fn push(&mut self, value: Entry) {
+		self.heap.push(value)
+	}
+
+	pub fn pop(&mut self) -> Option<Entry> {
+		return self.heap.pop()
+	}
+
+    pub fn drain(&mut self, size: usize) -> Vec<Entry> {
+        let mut res: Vec<Entry> = Vec::new();
+        for _e in 0..size {
+            res.push(self.pop().unwrap())
+        }
+        res
+    }
+}
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+       Some(self.cmp(other))
+    }
+}
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority == other.priority
+    }
+}
+impl Eq for Entry {}
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // This is for min heap >> highest priority user is priority 1, lowest is <intmax>.
+        // To convert to maxheap interchange left and right variables.
+        let left = other.priority;
+        let right = self.priority;
+        left.cmp(&right)
+    }
+}
 
 /// Queue entry / in-progress request state
 #[derive(Debug)]
@@ -140,7 +188,7 @@ pub(crate) struct Queue<B: BatchType> {
 
     receiver: Receiver<Vec<Entry>>,
     // Staging buffer, filled until max_size is reached
-    buffer: VecDeque<Entry>,
+    buffer: PriorityQueue,
     /// Id of the next entry
     next_id: u64,
     /// Id of the next batch
@@ -165,7 +213,7 @@ impl<B: BatchType> Queue<B> {
         Self {
             config,
             receiver,
-            buffer: VecDeque::new(),
+            buffer: PriorityQueue::new(1000),
             next_id: 0,
             next_batch_id: 1,
             batch_type: _batch_type,
@@ -180,7 +228,7 @@ impl<B: BatchType> Queue<B> {
     /// Returns None only if the queue has been closed
     pub(crate) async fn next_batch(&mut self, entries: &mut IntMap<u64, Entry>) -> Option<Batch> {
         loop {
-            if self.buffer.is_empty() {
+            if self.buffer.heap.is_empty() {
                 // Await on the queue while the buffer is empty
                 match self.receiver.recv().await {
                     Some(ents) => self.add_to_buffer(ents),
@@ -207,7 +255,7 @@ impl<B: BatchType> Queue<B> {
     pub(crate) async fn service_queue(&mut self) {
         // First prune existing cancelled or expired requests
         let mut pruned = false;
-        self.buffer.retain_mut(|entry| match entry {
+        self.buffer.heap.retain(|entry| match entry {
             entry if entry.is_cancelled() => {
                 increment_labeled_counter("tgi_request_failure", &[("err", "cancelled")], 1);
                 pruned = true;
@@ -216,10 +264,8 @@ impl<B: BatchType> Queue<B> {
             entry if entry.deadline_exceeded() => {
                 // Send timeout response
                 increment_labeled_counter("tgi_request_failure", &[("err", "timeout")], 1);
-                entry.batch_time = Some(Instant::now());
-                entry
-                    .send_final(Ok(InferResponse::early_timeout(entry)))
-                    .unwrap_or_default();
+                // entry.batch_time = Some(Instant::now());
+                // entry.send_final(Ok(InferResponse::early_timeout(entry))).unwrap_or_default();
                 pruned = true;
                 false
             }
@@ -227,7 +273,7 @@ impl<B: BatchType> Queue<B> {
         });
 
         if pruned {
-            set_gauge("tgi_queue_size", self.buffer.len() as f64);
+            set_gauge("tgi_queue_size", self.buffer.heap.len() as f64);
         }
 
         while let Some(ents) = self.receiver.recv().await {
@@ -236,13 +282,15 @@ impl<B: BatchType> Queue<B> {
     }
 
     fn add_to_buffer(&mut self, new_entries: Vec<Entry>) {
-        self.buffer.extend(new_entries);
-        set_gauge("tgi_queue_size", self.buffer.len() as f64);
+        for req in new_entries {
+            self.buffer.push(req);
+        }
+        set_gauge("tgi_queue_size", self.buffer.heap.len() as f64);
     }
 
     #[allow(dead_code)]
     fn get_queue_length(&mut self) -> usize{
-        return self.buffer.len()
+        return self.buffer.heap.len()
     }
 
     /// Get the next batch without blocking.
@@ -252,7 +300,7 @@ impl<B: BatchType> Queue<B> {
         entries: &mut IntMap<u64, Entry>,
         min_size: usize,
     ) -> Option<Batch> {
-        let buffer_size = self.buffer.len();
+        let buffer_size = self.buffer.heap.len();
         if buffer_size < min_size {
             // Not enough requests waiting to reach min_size
             self.last_logged = None;
@@ -268,7 +316,7 @@ impl<B: BatchType> Queue<B> {
 
         // Indices into buffer of entries chosen to add to next batch
         let mut chosen_indices = vec![];
-        let mut btree = None;
+        // let mut btree = None;
         let mut time_cutoff = None;
 
         let now = Instant::now();
@@ -296,7 +344,7 @@ impl<B: BatchType> Queue<B> {
 
         // We first do a read-only pass over the queue to allow skipping over large entries
         // that don't fit in the current batch to reach smaller entries that do
-        for (index, entry) in self.buffer.iter().enumerate() {
+        for (index, entry) in self.buffer.heap.iter().enumerate() {
             let config = &self.config;
             if matches!(time_cutoff, Some(t) if entry.queue_time > t) {
                 break;
@@ -309,61 +357,61 @@ impl<B: BatchType> Queue<B> {
             let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
 
             // Avoid more granular analysis if possible
-            if self
-                .batch_type
-                .batch_max_weight(&next_stats, total_count + 1)
-                > config.weight_limit
-            {
-                // We aren't sure whether this next request will fit, so populate
-                // a btree with the current batch of requests, the set of
-                // requests already evaluated, and this one, and perform more
-                // granular analysis to verify that the batch shape won't exceed
-                // the limit at any point
+            // if self
+            //     .batch_type
+            //     .batch_max_weight(&next_stats, total_count + 1)
+            //     > config.weight_limit
+            // {
+            //     // We aren't sure whether this next request will fit, so populate
+            //     // a btree with the current batch of requests, the set of
+            //     // requests already evaluated, and this one, and perform more
+            //     // granular analysis to verify that the batch shape won't exceed
+            //     // the limit at any point
 
-                // Allocate btree the first time it's required
-                let tree = btree.get_or_insert_with(|| {
-                    let mut t = Box::<BTreeSet<(usize, usize, usize)>>::default();
-                    // Populate with records corresponding to all existing and pending entries
-                    let pending = chosen_indices
-                        .iter()
-                        .map(|i| (&0, self.buffer.get(*i).unwrap()));
-                    for (_, e) in entries.iter().chain(pending) {
-                        let generated_count = e.generated_tokens as usize;
-                        t.insert((
-                            e.request.parameters.max_new_tokens as usize - generated_count,
-                            e.input_length + e.prefix_length + generated_count,
-                            t.len(),
-                        ));
-                    }
-                    t
-                });
-                // Add the current entry
-                tree.insert((output_len, input_len, tree.len()));
+            //     // Allocate btree the first time it's required
+            //     let tree = btree.get_or_insert_with(|| {
+            //         let mut t = Box::<BTreeSet<(usize, usize, usize)>>::default();
+            //         // Populate with records corresponding to all existing and pending entries
+            //         let pending = chosen_indices
+            //             .iter()
+            //             .map(|i| (&0, self.buffer.get(*i).unwrap()));
+            //         for (_, e) in entries.iter().chain(pending) {
+            //             let generated_count = e.generated_tokens as usize;
+            //             t.insert((
+            //                 e.request.parameters.max_new_tokens as usize - generated_count,
+            //                 e.input_length + e.prefix_length + generated_count,
+            //                 t.len(),
+            //             ));
+            //         }
+            //         t
+            //     });
+            //     // Add the current entry
+            //     tree.insert((output_len, input_len, tree.len()));
 
-                // Perform analysis
-                if self
-                    .batch_type
-                    .exceeds_weight(tree, config.weight_limit, output_len)
-                {
-                    if chosen_indices.len() + buffer_size < min_size + index + 1 {
-                        // We don't have enough remaining to meet min_size
-                        self.last_logged = None;
-                        return None;
-                    }
-                    // Remove our tuple from the set
-                    tree.remove(&(output_len, input_len, tree.len() - 1));
-                    time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                    continue;
-                }
-                increment_counter("tgi_granular_batch_addition", 1);
-            } else if let Some(tree) = btree.as_mut() {
-                // If we initialized the btree for a prior request, keep it updated
-                tree.insert((output_len, input_len, tree.len()));
-            }
-            // Here, we can add this request to the batch without breaching memory limit
-            if time_cutoff.is_some() {
-                increment_counter("tgi_queue_jump", 1);
-            }
+            //     // Perform analysis
+            //     if self
+            //         .batch_type
+            //         .exceeds_weight(tree, config.weight_limit, output_len)
+            //     {
+            //         if chosen_indices.len() + buffer_size < min_size + index + 1 {
+            //             // We don't have enough remaining to meet min_size
+            //             self.last_logged = None;
+            //             return None;
+            //         }
+            //         // Remove our tuple from the set
+            //         tree.remove(&(output_len, input_len, tree.len() - 1));
+            //         time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
+            //         continue;
+            //     }
+            //     increment_counter("tgi_granular_batch_addition", 1);
+            // } else if let Some(tree) = btree.as_mut() {
+            //     // If we initialized the btree for a prior request, keep it updated
+            //     tree.insert((output_len, input_len, tree.len()));
+            // }
+            // // Here, we can add this request to the batch without breaching memory limit
+            // if time_cutoff.is_some() {
+            //     increment_counter("tgi_queue_jump", 1);
+            // }
 
             // Also check whether adding this request will breach the prefill weight limit
             if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
@@ -389,10 +437,10 @@ impl<B: BatchType> Queue<B> {
                     }
                 }
                 if skip {
-                    if let Some(tree) = btree.as_mut() {
-                        // Remove our tuple from the set
-                        tree.remove(&(output_len, input_len, tree.len() - 1));
-                    }
+                    // if let Some(tree) = btree.as_mut() {
+                    //     // Remove our tuple from the set
+                    //     tree.remove(&(output_len, input_len, tree.len() - 1));
+                    // }
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
                     increment_counter("tgi_prefill_weight_limit_exceeded", 1);
                     continue;
@@ -432,7 +480,7 @@ impl<B: BatchType> Queue<B> {
             .iter()
             .enumerate()
             .map(|(i, index)| {
-                let mut entry = self.buffer.remove(index - i).expect("bug");
+                let mut entry = self.buffer.pop().expect("bug");
                 // Allocate new id
                 let id = self.next_id;
                 self.next_id += 1;
@@ -463,7 +511,7 @@ impl<B: BatchType> Queue<B> {
             requests.iter().map(|r| r.input_length as usize),
             chosen_count,
         );
-        set_gauge("tgi_queue_size", self.buffer.len() as f64);
+        set_gauge("tgi_queue_size", self.buffer.heap.len() as f64);
         let batch = Batch {
             id: self.next_batch_id,
             requests,

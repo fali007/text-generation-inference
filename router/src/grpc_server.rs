@@ -1,4 +1,4 @@
-use std::{borrow::Cow, future::Future, net::SocketAddr, ops::Add};
+use std::{borrow::Cow, collections::HashMap, future::Future, net::SocketAddr, ops::Add};
 
 use futures::{future::try_join_all, TryFutureExt};
 use tokio::{
@@ -34,7 +34,7 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send + 'static>(
     shared_state: ServerState,
     tokenizer: AsyncTokenizer,
     signal: F,
-    user_config: Option<String>,
+    user_config_str: Option<String>,
 ) -> JoinHandle<()> {
     let mut builder = Server::builder();
 
@@ -53,12 +53,20 @@ pub(crate) async fn start_grpc_server<F: Future<Output = ()> + Send + 'static>(
             .expect("tls configuration error");
     }
 
+    let user_config = UserConfig::new(user_config_str);
+    let mut priority_config: HashMap<String, u32> = HashMap::new();
+
+    for user in user_config.users.into_iter() {
+        priority_config.insert(user.user_id.clone(), user.priority);
+    }
+
     // Build and start server
     let grpc_service = GenerationServicer {
         state: shared_state,
         tokenizer,
-        user_config,
+        priority_config,
     };
+
     let grpc_server = builder
         .add_service(GenerationServiceServer::new(grpc_service))
         .serve_with_shutdown(grpc_addr, signal);
@@ -81,14 +89,14 @@ async fn load_pem(path: String, name: &str) -> Vec<u8> {
 pub struct GenerationServicer {
     state: ServerState,
     tokenizer: AsyncTokenizer,
-    user_config: Option<String>,
+    priority_config: HashMap<String, u32>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct User {
-    user_id : String,
-    priority : u32,
+    pub user_id : String,
+    pub priority : u32,
 }
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
@@ -126,8 +134,6 @@ impl GenerationService for GenerationServicer {
         &self,
         request: Request<BatchedGenerationRequest>,
     ) -> Result<Response<BatchedGenerationResponse>, Status> {
-        let user_config: UserConfig = UserConfig::new(self.user_config.clone());
-        println!("{:?}", user_config);
         let start_time = Instant::now();
         let request = request.extract_context();
         let br = request.into_inner();
@@ -139,6 +145,8 @@ impl GenerationService for GenerationServicer {
                 responses: vec![],
             }));
         }
+
+        let priority = self.priority_config.get(&br.user_id).unwrap();
         
         increment_counter("tgi_request_input_count", batch_size as u64);
         // Limit concurrent requests by acquiring a permit from the semaphore
@@ -170,6 +178,7 @@ impl GenerationService for GenerationServicer {
                     request_size.input_length,
                     request_size.prefix_length,
                     request,
+                    *priority,
                 )
                 .map_ok(|response| {
                     log_response(
@@ -193,7 +202,7 @@ impl GenerationService for GenerationServicer {
                 .iter()
                 .map(|r| r.0.input_length)
                 .collect::<Vec<usize>>();
-            match self.state.batcher.infer_batch(valids).await {
+            match self.state.batcher.infer_batch(valids, *priority).await {
                 Ok(response_chans) => {
                     try_join_all(
                         response_chans

@@ -61,6 +61,7 @@ pub(crate) struct Entry {
     pub output: Option<IncrementalDecoderWrapper>,
     /// Generated token count
     pub generated_tokens: u32,
+    pub priority: u32,
 }
 
 impl Entry {
@@ -70,6 +71,7 @@ impl Entry {
         prefix_length: usize,
         response_tx: Option<Sender<Result<InferResponse, ClientError>>>,
         stream_tx: Option<UnboundedSender<Result<InferResponse, ClientError>>>,
+        priority: u32,
     ) -> Self {
         Self {
             request,
@@ -84,6 +86,7 @@ impl Entry {
             tokens: vec![],
             output: None,
             generated_tokens: 0,
+            priority,
         }
     }
 

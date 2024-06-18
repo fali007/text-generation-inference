@@ -120,6 +120,7 @@ impl Batcher {
         input_length: usize,
         prefix_length: usize,
         request: GenerateRequest,
+        priority: u32
     ) -> Result<InferResponse, InferError> {
         // One shot channel to communicate with the background batching task
         let (response_tx, response_rx) = oneshot::channel();
@@ -131,6 +132,7 @@ impl Batcher {
             prefix_length,
             Some(response_tx),
             None,
+            priority,
         )])?;
 
         // Await on the response from the background task
@@ -145,6 +147,7 @@ impl Batcher {
     pub(crate) async fn infer_batch(
         &self,
         requests: Vec<(RequestSize, GenerateRequest)>,
+        priority: u32,
     ) -> Result<
         Vec<
             Map<
@@ -178,6 +181,7 @@ impl Batcher {
                     request_size.prefix_length,
                     Some(response_tx),
                     None,
+                    priority,
                 )
             })
             .collect();
@@ -225,6 +229,8 @@ impl Batcher {
             prefix_length,
             None,
             Some(response_tx),
+            // [Felix] : added 0 priority for stream
+            0
         )])?;
 
         Ok(ResponseStream {

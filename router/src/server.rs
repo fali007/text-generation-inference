@@ -125,6 +125,7 @@ async fn generate(
             request_size.input_length,
             request_size.prefix_length,
             validated_request,
+            0
         )
         .await
         .map_err(|err| {

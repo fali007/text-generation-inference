@@ -67,7 +67,7 @@ struct Args {
         default_value = "text-generation-inference.router"
     )]
     otlp_service_name: String,
-    #[clap(long, env = "USER_CONFIG", default_value = "{\"Users\":[{\"UserId\":\"Alan\",\"Priority\":1},{\"UserId\":\"Noel\",\"Priority\":2},{\"UserId\":\"Noel\",\"Priority\":3}]}")]
+    #[clap(long, env = "USER_CONFIG", default_value = "{\"Users\":[{\"UserId\":\"Alan\",\"Priority\":1},{\"UserId\":\"Noel\",\"Priority\":2},{\"UserId\":\"Hari\",\"Priority\":3}]}")]
     user_config: Option<String>,
 }
 

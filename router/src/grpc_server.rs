@@ -15,22 +15,9 @@ use tracing::{instrument, Span};
 use unicode_truncate::UnicodeTruncateStr;
 
 use crate::{
-    batcher::{InferError, InferResponse, ResponseStream, Times},
-    default_parameters,
-    pb::fmaas::{
-        generation_service_server::{GenerationService, GenerationServiceServer},
-        model_info_response::ModelKind,
-        BatchedGenerationRequest, BatchedGenerationResponse, BatchedTokenizeRequest,
-        BatchedTokenizeResponse, DecodingMethod, GenerationResponse, ModelInfoRequest,
-        ModelInfoResponse, Parameters, SingleGenerationRequest, StopReason,
-        StopReason::{Cancelled, Error, TokenLimit},
-        TokenizeResponse, RunningParamsInfoRequest, RunningParamsInfoResponse,
-    },
-    server::ServerState,
-    tokenizer::AsyncTokenizer,
-    tracing::ExtractTelemetryContext,
-    validation::{RequestSize, ValidationError},
-    GenerateParameters, GenerateRequest,
+    batcher::{InferError, InferResponse, ResponseStream, Times}, default_parameters, metrics::observe_user_histogram, pb::fmaas::{
+        generation_service_server::{GenerationService, GenerationServiceServer}, model_info_response::ModelKind, BatchedGenerationRequest, BatchedGenerationResponse, BatchedTokenizeRequest, BatchedTokenizeResponse, DecodingMethod, GenerationResponse, ModelInfoRequest, ModelInfoResponse, Parameters, RunningParamsInfoRequest, RunningParamsInfoResponse, SingleGenerationRequest, StopReason::{self, Cancelled, Error, TokenLimit}, TokenizeResponse
+    }, server::ServerState, tokenizer::AsyncTokenizer, tracing::ExtractTelemetryContext, validation::{RequestSize, ValidationError}, GenerateParameters, GenerateRequest
 };
 use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram};
 use crate::pb::fmaas::tokenize_response::Offset;
@@ -139,7 +126,7 @@ impl GenerationService for GenerationServicer {
         &self,
         request: Request<BatchedGenerationRequest>,
     ) -> Result<Response<BatchedGenerationResponse>, Status> {
-        let user_config: UserConfig = UserConfig::new(self.user_config);
+        let user_config: UserConfig = UserConfig::new(self.user_config.clone());
         println!("{:?}", user_config);
         let start_time = Instant::now();
         let request = request.extract_context();
@@ -511,15 +498,15 @@ fn log_response(
         span.record("total_time", format!("{total_time:?}"));
         span.record("input_toks", input_tokens);
 
-        observe_histogram(
+        observe_user_histogram(
             "tgi_request_inference_duration",
-            inference_time.as_secs_f64(),
-            "user" => user_id.clone()
+            &[("user", user_id.clone())],
+            inference_time.as_secs_f64()
         );
-        observe_histogram(
+        observe_user_histogram(
             "tgi_request_mean_time_per_token_duration",
-            time_per_token.as_secs_f64(),
-            "user" => user_id.clone()
+            &[("user",user_id.clone())],
+            time_per_token.as_secs_f64()
         );
     }
 
@@ -533,10 +520,10 @@ fn log_response(
             );
             observe_histogram("tgi_request_duration", total_time.as_secs_f64());
             observe_histogram("tgi_request_generated_tokens", generated_tokens as f64);
-            observe_histogram(
+            observe_user_histogram(
                 "tgi_request_total_tokens",
+                &[("user",user_id.clone())],
                 (generated_tokens as usize + input_tokens) as f64,
-                "user" => user_id.clone()
             );
         }
     }

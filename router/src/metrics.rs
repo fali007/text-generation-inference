@@ -32,3 +32,7 @@ pub fn observe_histogram(name: &'static str, value: f64) {
 pub fn observe_labeled_histogram(name: &'static str, labels: &[(&'static str, &'static str)], value: f64) {
     metrics::histogram!(name, labels).record(value);
 }
+
+pub fn observe_user_histogram(name: &'static str, user: &[(&'static str, String)], value: f64) {
+    metrics::histogram!(name, user).record(value);
+}

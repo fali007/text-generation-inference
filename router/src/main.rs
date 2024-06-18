@@ -7,7 +7,6 @@ use std::{
 
 /// Text Generation Inference external gRPC server entrypoint
 use clap::Parser;
-use moka::ops::compute::Op;
 use opentelemetry::{
     global,
     KeyValue,

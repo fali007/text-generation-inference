@@ -1,5 +1,5 @@
 use crate::pb::fmaas::RunningParamsInfoResponse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Mutex;
 use std::{
     collections::BTreeSet,
@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 
+use futures::pending;
 use nohash_hasher::IntMap;
 use text_generation_client::{
     Batch, ClientError, LengthPenalty, NextTokenChooserParameters, Request, RequestedDetails, Token,
@@ -59,6 +60,10 @@ impl PriorityQueue {
             res.push(self.pop().unwrap())
         }
         res
+    }
+
+    pub fn peek(&mut self) -> Option<&Entry> {
+        return self.heap.peek()
     }
 }
 impl PartialOrd for Entry {
@@ -316,7 +321,7 @@ impl<B: BatchType> Queue<B> {
 
         // Indices into buffer of entries chosen to add to next batch
         let mut chosen_indices = vec![];
-        // let mut btree = None;
+        let mut btree = None;
         let mut time_cutoff = None;
 
         let now = Instant::now();
@@ -342,120 +347,17 @@ impl<B: BatchType> Queue<B> {
         };
         let max_prefill_padding = self.config.prefill_padding_limit;
 
-        // We first do a read-only pass over the queue to allow skipping over large entries
-        // that don't fit in the current batch to reach smaller entries that do
-        for (index, entry) in self.buffer.heap.iter().enumerate() {
-            let config = &self.config;
-            if matches!(time_cutoff, Some(t) if entry.queue_time > t) {
-                break;
+        let tree = btree.get_or_insert_with(|| {
+            let mut t = Box::<BTreeSet<(usize, usize, usize)>>::default();
+            for (_, e) in entries.iter() {
+                let generated_count = e.generated_tokens as usize;
+                t.insert((e.request.parameters.max_new_tokens as usize - generated_count,e.input_length + e.prefix_length + generated_count,t.len()));
             }
+            t
+        });
 
-            // For the purposes of deciding if a request can fit into a batch,
-            // the input length needs to take the length of the prefix into account as well
-            let input_len = entry.input_length + entry.prefix_length;
-            let output_len = entry.request.parameters.max_new_tokens as usize;
-            let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
-
-            // Avoid more granular analysis if possible
-            // if self
-            //     .batch_type
-            //     .batch_max_weight(&next_stats, total_count + 1)
-            //     > config.weight_limit
-            // {
-            //     // We aren't sure whether this next request will fit, so populate
-            //     // a btree with the current batch of requests, the set of
-            //     // requests already evaluated, and this one, and perform more
-            //     // granular analysis to verify that the batch shape won't exceed
-            //     // the limit at any point
-
-            //     // Allocate btree the first time it's required
-            //     let tree = btree.get_or_insert_with(|| {
-            //         let mut t = Box::<BTreeSet<(usize, usize, usize)>>::default();
-            //         // Populate with records corresponding to all existing and pending entries
-            //         let pending = chosen_indices
-            //             .iter()
-            //             .map(|i| (&0, self.buffer.get(*i).unwrap()));
-            //         for (_, e) in entries.iter().chain(pending) {
-            //             let generated_count = e.generated_tokens as usize;
-            //             t.insert((
-            //                 e.request.parameters.max_new_tokens as usize - generated_count,
-            //                 e.input_length + e.prefix_length + generated_count,
-            //                 t.len(),
-            //             ));
-            //         }
-            //         t
-            //     });
-            //     // Add the current entry
-            //     tree.insert((output_len, input_len, tree.len()));
-
-            //     // Perform analysis
-            //     if self
-            //         .batch_type
-            //         .exceeds_weight(tree, config.weight_limit, output_len)
-            //     {
-            //         if chosen_indices.len() + buffer_size < min_size + index + 1 {
-            //             // We don't have enough remaining to meet min_size
-            //             self.last_logged = None;
-            //             return None;
-            //         }
-            //         // Remove our tuple from the set
-            //         tree.remove(&(output_len, input_len, tree.len() - 1));
-            //         time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-            //         continue;
-            //     }
-            //     increment_counter("tgi_granular_batch_addition", 1);
-            // } else if let Some(tree) = btree.as_mut() {
-            //     // If we initialized the btree for a prior request, keep it updated
-            //     tree.insert((output_len, input_len, tree.len()));
-            // }
-            // // Here, we can add this request to the batch without breaching memory limit
-            // if time_cutoff.is_some() {
-            //     increment_counter("tgi_queue_jump", 1);
-            // }
-
-            // Also check whether adding this request will breach the prefill weight limit
-            if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
-                let next_prefill_stats = <B>::update_stats(&prefill_stats, input_len, 0);
-                let batch_size = chosen_indices.len() + 1;
-                let mut skip = false;
-                if effective_prefill_weight_limit > 0 {
-                    let prefill_weight = self
-                        .batch_type
-                        .prefill_weight(&next_prefill_stats, batch_size);
-                    if prefill_weight > effective_prefill_weight_limit {
-                        skip = true;
-                        increment_counter("tgi_prefill_weight_limit_exceeded", 1);
-                    }
-                }
-                if !skip && max_prefill_padding < 1.0 {
-                    let percentage_padding = <B>::percent_padding(&next_prefill_stats, batch_size);
-                    if percentage_padding > max_prefill_padding {
-                        skip = true;
-                        //TODO if we skip due to padding and added other requests from queue,
-                        // we could consider doing another pass since the padding proportion may have decreased
-                        increment_counter("tgi_prefill_padding_limit_exceeded", 1);
-                    }
-                }
-                if skip {
-                    // if let Some(tree) = btree.as_mut() {
-                    //     // Remove our tuple from the set
-                    //     tree.remove(&(output_len, input_len, tree.len() - 1));
-                    // }
-                    time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                    increment_counter("tgi_prefill_weight_limit_exceeded", 1);
-                    continue;
-                }
-                prefill_stats = next_prefill_stats;
-            }
-
-            batch_stats = next_stats;
-
-            chosen_indices.push(index);
-            total_count += 1;
-            if total_count >= config.size_limit {
-                break;
-            }
-        }
+        // enumerate over each req to see if it fits into the batch
+        // If possible add request to the batch else stop.
 
         let chosen_count = chosen_indices.len();
         if chosen_count == 0 {

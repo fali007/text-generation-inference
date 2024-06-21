@@ -364,6 +364,8 @@ impl<B: BatchType> Queue<B> {
             let output_len = entry.request.parameters.max_new_tokens as usize;
             let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
 
+            tree.insert((output_len, input_len, tree.len()));
+
             if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > self.config.weight_limit {
                 if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
                     if choosen_req.len() + buffer_size < min_size + index + 1 {
@@ -376,6 +378,16 @@ impl<B: BatchType> Queue<B> {
                 }
             } else if !tree.is_empty() {
                 tree.insert((output_len, input_len, tree.len()));
+            }
+            if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
+                let next_prefill_stats = <B>::update_stats(&prefill_stats, input_len, 0);
+                let batch_size = choosen_req.len() + 1;
+                if effective_prefill_weight_limit > 0 {
+                    let prefill_weight = self.batch_type.prefill_weight(&next_prefill_stats, batch_size);
+                    if prefill_weight > effective_prefill_weight_limit {
+                        break
+                    }
+                }
             }
             total_count += 1;
             if total_count >= self.config.size_limit {

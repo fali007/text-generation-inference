@@ -322,8 +322,8 @@ impl<B: BatchType> Queue<B> {
         let mut btree = None;
 
         let now = Instant::now();
-        let mut batch_stats = <B>::compute_stats(entries);
-        let mut prefill_stats = <B>::compute_stats(&self.empty_map);
+        let batch_stats = <B>::compute_stats(entries);
+        let prefill_stats = <B>::compute_stats(&self.empty_map);
 
         // Compute the effective prefill weight limit, taking into account space already consumed
         // by the in-progress batch
@@ -358,7 +358,7 @@ impl<B: BatchType> Queue<B> {
 
         let mut choosen_req: Vec<Entry> = Vec::new();
 
-        for index in 0..buffer_size {
+        for _index in 0..buffer_size {
             let entry = self.buffer.peek().unwrap();
             let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;
@@ -367,13 +367,9 @@ impl<B: BatchType> Queue<B> {
             tree.insert((output_len, input_len, tree.len()));
 
             if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > self.config.weight_limit {
-                if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
-                    if choosen_req.len() + buffer_size < min_size + index + 1 {
-                        self.last_logged = None;
-                        return None
-                    }
-                }
-                if choosen_req.len() > 0 {
+                if choosen_req.len() == 0 {
+                    return None
+                } else {
                     break
                 }
             } else if !tree.is_empty() {

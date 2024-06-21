@@ -1,15 +1,14 @@
 use crate::pb::fmaas::RunningParamsInfoResponse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 use std::sync::Mutex;
 use std::{
     collections::BTreeSet,
     mem::take,
-    ops::Add,
     time::Duration,
     sync::Arc,
 };
 
-use futures::pending;
+use axum::http::request;
 use nohash_hasher::IntMap;
 use text_generation_client::{
     Batch, ClientError, LengthPenalty, NextTokenChooserParameters, Request, RequestedDetails, Token,
@@ -30,7 +29,7 @@ use crate::{
     batch_types::BatchType, batcher::InferResponse, decoder::IncrementalDecoderWrapper,
     GenerateParameters, GenerateRequest,
 };
-use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram, set_gauge};
+use crate::metrics::{increment_labeled_counter, observe_histogram, set_gauge};
 
 // Requests that fit into the next batch can overtake others
 // that don't as long as they arrive within this amount of time after
@@ -320,9 +319,7 @@ impl<B: BatchType> Queue<B> {
         }
 
         // Indices into buffer of entries chosen to add to next batch
-        let mut chosen_indices = vec![];
         let mut btree = None;
-        let mut time_cutoff = None;
 
         let now = Instant::now();
         let mut batch_stats = <B>::compute_stats(entries);
@@ -359,7 +356,35 @@ impl<B: BatchType> Queue<B> {
         // enumerate over each req to see if it fits into the batch
         // If possible add request to the batch else stop.
 
-        let chosen_count = chosen_indices.len();
+        let mut choosen_req: Vec<Entry> = Vec::new();
+
+        for index in self.buffer.heap.len().. {
+            let entry = self.buffer.peek().unwrap();
+            let input_len = entry.input_length + entry.prefix_length;
+            let output_len = entry.request.parameters.max_new_tokens as usize;
+            let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
+
+            if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > self.config.weight_limit {
+                if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
+                    if choosen_req.len() + buffer_size < min_size + index + 1 {
+                        self.last_logged = None;
+                        return None
+                    }
+                }
+                if choosen_req.len() > 0 {
+                    break
+                }
+            } else if !tree.is_empty() {
+                tree.insert((output_len, input_len, tree.len()));
+            }
+            total_count += 1;
+            if total_count >= self.config.size_limit {
+                break;
+            }
+            choosen_req.push(self.buffer.pop().unwrap());
+        }
+
+        let chosen_count = choosen_req.len();
         if chosen_count == 0 {
             // Don't repeatedly log when no requests were chosen if the current/waiting
             // request counts haven't changed
@@ -378,36 +403,29 @@ impl<B: BatchType> Queue<B> {
         );
 
         let some_now = Some(now);
-        let requests = chosen_indices
-            .iter()
-            .enumerate()
-            .map(|(i, index)| {
-                let mut entry = self.buffer.pop().expect("bug");
-                // Allocate new id
-                let id = self.next_id;
-                self.next_id += 1;
-                let request = Request {
-                    id,
-                    prefix_id: entry.request.prefix_id.clone().unwrap_or_default(),
-                    inputs: entry.request.inputs.clone(),
-                    input_length: entry.input_length as u32,
-                    max_output_length: entry.request.parameters.max_new_tokens,
-                    truncate: entry.request.parameters.truncate_input_tokens > 0,
-                    parameters: Some((&entry.request.parameters).into()),
-                    stream_response: entry.stream_tx.is_some(),
-                    details: (&entry.request.parameters).into(),
-                };
-                // Set batch_time
-                entry.batch_time = some_now;
-                observe_histogram(
-                    "tgi_request_queue_duration",
-                    (now - entry.queue_time).as_secs_f64()
-                );
-                // Insert into entries IntMap
-                entries.insert(id, entry);
-                request
-            })
-            .collect::<Vec<Request>>();
+        let mut requests : Vec<Request> = Vec::new();
+        for mut entry in choosen_req {
+            let id = self.next_id;
+            self.next_id += 1;
+            let request = Request {
+                id,
+                prefix_id: entry.request.prefix_id.clone().unwrap_or_default(),
+                inputs: entry.request.inputs.clone(),
+                input_length: entry.input_length as u32,
+                max_output_length: entry.request.parameters.max_new_tokens,
+                truncate: entry.request.parameters.truncate_input_tokens > 0,
+                parameters: Some((&entry.request.parameters).into()),
+                stream_response: entry.stream_tx.is_some(),
+                details: (&entry.request.parameters).into(),
+            };
+            entry.batch_time = some_now;
+            observe_histogram(
+                "tgi_request_queue_duration",
+                (now - entry.queue_time).as_secs_f64()
+            );
+            entries.insert(id, entry);
+            requests.push(request);
+        }
 
         let batch_tokens = <B>::count_tokens(
             requests.iter().map(|r| r.input_length as usize),

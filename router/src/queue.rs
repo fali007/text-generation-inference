@@ -358,7 +358,7 @@ impl<B: BatchType> Queue<B> {
 
         let mut choosen_req: Vec<Entry> = Vec::new();
 
-        for index in self.buffer.heap.len().. {
+        for index in 0..buffer_size {
             let entry = self.buffer.peek().unwrap();
             let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;

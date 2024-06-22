@@ -366,14 +366,16 @@ impl<B: BatchType> Queue<B> {
 
             tree.insert((output_len, input_len, tree.len()));
 
+            if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
+                break
+            }
+
             if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > self.config.weight_limit {
-                if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
-                    if choosen_req.len() + buffer_size < min_size + index + 1 {
-                        self.last_logged = None;
-                        return None
-                    } else {
-                        break
-                    }
+                if choosen_req.len() + buffer_size < min_size + index + 1 {
+                    self.last_logged = None;
+                    return None
+                } else {
+                    break
                 }
             } 
             if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {

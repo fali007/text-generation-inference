@@ -358,7 +358,7 @@ impl<B: BatchType> Queue<B> {
 
         let mut choosen_req: Vec<Entry> = Vec::new();
 
-        for _index in 0..buffer_size {
+        for index in 0..buffer_size {
             let entry = self.buffer.peek().unwrap();
             let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;
@@ -367,16 +367,17 @@ impl<B: BatchType> Queue<B> {
             tree.insert((output_len, input_len, tree.len()));
 
             if self.batch_type.batch_max_weight(&next_stats, total_count + 1) > self.config.weight_limit {
-                if choosen_req.len() == 0 {
-                    return None
-                } else {
-                    break
+                if self.batch_type.exceeds_weight(tree, self.config.weight_limit, output_len) {
+                    if choosen_req.len() + buffer_size < min_size + index + 1 {
+                        self.last_logged = None;
+                        return None
+                    } else {
+                        break
+                    }
                 }
-            } else if !tree.is_empty() {
-                tree.insert((output_len, input_len, tree.len()));
-            }
+            } 
             if effective_prefill_weight_limit > 0 || max_prefill_padding < 1.0 {
-                let next_prefill_stats = <B>::update_stats(&prefill_stats, input_len, 0);
+                let next_prefill_stats = <B>::update_stats(&prefill_stats, input_len * 1.2 as usize, 0);
                 let batch_size = choosen_req.len() + 1;
                 if effective_prefill_weight_limit > 0 {
                     let prefill_weight = self.batch_type.prefill_weight(&next_prefill_stats, batch_size);

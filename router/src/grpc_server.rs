@@ -527,7 +527,7 @@ fn log_response(
             increment_labeled_counter(
                 "tgi_request_success", &[("stop_reason", reason.as_str_name()), ("kind", kind)], 1
             );
-            observe_histogram("tgi_request_duration", total_time.as_secs_f64());
+            observe_user_histogram("tgi_request_duration", &[("user",user_id.clone())], total_time.as_secs_f64());
             observe_histogram("tgi_request_generated_tokens", generated_tokens as f64);
             observe_user_histogram(
                 "tgi_request_total_tokens",

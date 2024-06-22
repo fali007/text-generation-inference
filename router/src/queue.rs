@@ -322,8 +322,8 @@ impl<B: BatchType> Queue<B> {
         let mut btree = None;
 
         let now = Instant::now();
-        let batch_stats = <B>::compute_stats(entries);
-        let prefill_stats = <B>::compute_stats(&self.empty_map);
+        let mut batch_stats = <B>::compute_stats(entries);
+        let mut prefill_stats = <B>::compute_stats(&self.empty_map);
 
         // Compute the effective prefill weight limit, taking into account space already consumed
         // by the in-progress batch
@@ -387,7 +387,15 @@ impl<B: BatchType> Queue<B> {
                         break
                     }
                 }
+                if max_prefill_padding < 1.0 {
+                    let percentage_padding = <B>::percent_padding(&next_prefill_stats, batch_size);
+                    if percentage_padding > max_prefill_padding {
+                        break
+                    }
+                }
+                prefill_stats = next_prefill_stats;
             }
+            batch_stats = next_stats;
             total_count += 1;
             if total_count >= self.config.size_limit {
                 break;

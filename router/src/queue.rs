@@ -334,7 +334,7 @@ impl<B: BatchType> Queue<B> {
                     .batch_type
                     .batch_initial_weight(&batch_stats, total_count);
                 let pct_space_free =
-                    1.0 - (current_batch_weight as f64 / self.config.weight_limit as f64);
+                    1.0 - (current_batch_weight as f64 / self.config.weight_limit as f64) * 1.2;
                 let limit = (pct_space_free * prefill_limit as f64) as usize;
                 if limit == 0 {
                     return None;
@@ -362,7 +362,7 @@ impl<B: BatchType> Queue<B> {
             let entry = self.buffer.peek().unwrap();
             let input_len = entry.input_length + entry.prefix_length;
             let output_len = entry.request.parameters.max_new_tokens as usize;
-            let next_stats = <B>::update_stats(&batch_stats, input_len, output_len);
+            let next_stats = <B>::update_stats(&batch_stats, input_len * 1.2 as usize, output_len * 1.2 as usize);
 
             tree.insert((output_len, input_len, tree.len()));
 

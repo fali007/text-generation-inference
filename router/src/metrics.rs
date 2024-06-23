@@ -18,6 +18,11 @@ pub fn increment_labeled_counter(name: &'static str, labels: &[(&'static str, &'
     metrics::counter!(format!("{name}_total"), labels).increment(value);
 }
 
+pub fn increment_user_counter(name: &'static str, labels: &[(&'static str, String)], value: u64) {
+    metrics::counter!(name, labels).increment(value);
+    metrics::counter!(format!("{name}_total"), labels).increment(value);
+}
+
 
 pub fn set_gauge(name: &'static str, value: f64) {
     metrics::gauge!(name).set(value);

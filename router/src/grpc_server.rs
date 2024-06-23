@@ -15,7 +15,7 @@ use tracing::{instrument, Span};
 use unicode_truncate::UnicodeTruncateStr;
 
 use crate::{
-    batcher::{InferError, InferResponse, ResponseStream, Times}, default_parameters, metrics::observe_user_histogram, pb::fmaas::{
+    batcher::{InferError, InferResponse, ResponseStream, Times}, default_parameters, metrics::{increment_user_counter, observe_user_histogram}, pb::fmaas::{
         generation_service_server::{GenerationService, GenerationServiceServer}, model_info_response::ModelKind, BatchedGenerationRequest, BatchedGenerationResponse, BatchedTokenizeRequest, BatchedTokenizeResponse, DecodingMethod, GenerationResponse, ModelInfoRequest, ModelInfoResponse, Parameters, RunningParamsInfoRequest, RunningParamsInfoResponse, SingleGenerationRequest, StopReason::{self, Cancelled, Error, TokenLimit}, TokenizeResponse
     }, server::ServerState, tokenizer::AsyncTokenizer, tracing::ExtractTelemetryContext, validation::{RequestSize, ValidationError}, GenerateParameters, GenerateRequest
 };
@@ -139,7 +139,7 @@ impl GenerationService for GenerationServicer {
         let br = request.into_inner();
         let batch_size = br.requests.len();
         let kind = if batch_size == 1 { "single" } else { "batch" };
-        increment_labeled_counter("tgi_request_count", &[("kind", kind)], 1);
+        increment_user_counter("tgi_request_count", &[("user", br.user_id.clone())], 1);
         if batch_size == 0 {
             return Ok(Response::new(BatchedGenerationResponse {
                 responses: vec![],

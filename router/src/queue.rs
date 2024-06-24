@@ -339,7 +339,7 @@ impl<B: BatchType> Queue<B> {
                     // Remove our tuple from the set
                     tree.remove(&(output_len, input_len, tree.len() - 1));
                     time_cutoff.get_or_insert_with(|| entry.queue_time.add(CUTOFF_DURATION));
-                    continue;
+                    break;
                 }
                 increment_counter("tgi_granular_batch_addition", 1);
             } else if let Some(tree) = btree.as_mut() {

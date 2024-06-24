@@ -8,7 +8,6 @@ use std::{
     sync::Arc,
 };
 
-use axum::http::request;
 use nohash_hasher::IntMap;
 use text_generation_client::{
     Batch, ClientError, LengthPenalty, NextTokenChooserParameters, Request, RequestedDetails, Token,

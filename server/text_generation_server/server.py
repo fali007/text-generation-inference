@@ -177,7 +177,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 input_tokens=[
                     input_tokens.to_pb() for input_tokens in input_token_info
                 ] if input_token_info is not None else None,
-                embedding = string(embeddings),
+                embedding = str(embeddings),
             )
 
     @log_rpc_handler_errors

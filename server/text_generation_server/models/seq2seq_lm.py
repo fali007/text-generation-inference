@@ -736,6 +736,8 @@ class Seq2SeqLM(Model):
         batch.max_decoder_input_length += 1
         batch.padding_right_offset -= 1
 
+        print(encoder_last_hidden_state)
+
         return generated_tokens, input_token_infos, decode_errors, forward_time_ns
 
 

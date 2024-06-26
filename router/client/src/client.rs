@@ -133,6 +133,7 @@ impl Client {
         let result = response
             .result
             .ok_or_else(|| ClientError::Generation("Unexpected empty response".into()))?;
+        println!("Embeddings of prefill {:?}", response.embedding);
         Ok((
             result.output_tokens,
             response.input_tokens,

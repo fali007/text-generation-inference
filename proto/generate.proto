@@ -179,6 +179,7 @@ message PrefillResponse {
     GenerateResult result = 1;
     
     repeated InputTokens input_tokens = 2; // optional
+    string embedding = 3;
 }
 
 message RequestsStatus {

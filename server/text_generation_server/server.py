@@ -143,7 +143,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 for_concat = len(self.cache) > 0
                 try:
                     # Prefill and generate first token
-                    output_tokens, input_token_info, decode_errors, forward_time_ns = self.model.generate_token(
+                    output_tokens, input_token_info, decode_errors, forward_time_ns, embeddings = self.model.generate_token(
                         batch, first=True, for_concat=for_concat,
                     )
                 except:
@@ -177,6 +177,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 input_tokens=[
                     input_tokens.to_pb() for input_tokens in input_token_info
                 ] if input_token_info is not None else None,
+                embedding = string(embeddings),
             )
 
     @log_rpc_handler_errors

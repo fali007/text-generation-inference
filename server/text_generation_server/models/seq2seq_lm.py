@@ -614,8 +614,6 @@ class Seq2SeqLM(Model):
         if decoder_inputs_embeds is not None:
             decoder_input_ids = None
 
-        print(inputs_embeds)
-
         start_time = time.time_ns()
         outputs = self.model.forward(
             input_ids=input_ids,

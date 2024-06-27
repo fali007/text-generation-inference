@@ -6,6 +6,7 @@ import time
 import json
 from datetime import datetime
 from functools import partial
+import numpy as np
 
 import torch.cuda
 from grpc import aio, StatusCode

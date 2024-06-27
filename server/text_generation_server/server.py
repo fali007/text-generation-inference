@@ -3,6 +3,7 @@ import logging
 import os, sys
 import threading
 import time
+import json
 from datetime import datetime
 from functools import partial
 
@@ -177,7 +178,7 @@ class TextGenerationService(generate_pb2_grpc.TextGenerationServiceServicer):
                 input_tokens=[
                     input_tokens.to_pb() for input_tokens in input_token_info
                 ] if input_token_info is not None else None,
-                embedding = str(embeddings),
+                embedding = json.dumps(embeddings.numpy().tolist()),
             )
 
     @log_rpc_handler_errors

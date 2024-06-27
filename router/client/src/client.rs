@@ -26,6 +26,7 @@ pub type GenerateTokenResponse = (
     Vec<GenerateError>,
     u64,
     Duration,
+    String,
 );
 
 impl Client {
@@ -133,13 +134,13 @@ impl Client {
         let result = response
             .result
             .ok_or_else(|| ClientError::Generation("Unexpected empty response".into()))?;
-        println!("Embeddings of prefill {:?}", response.embedding);
         Ok((
             result.output_tokens,
             response.input_tokens,
             result.errors,
             result.batch_id,
             Duration::from_nanos(result.forward_time_ns),
+            response.embedding,
         ))
     }
 
@@ -160,6 +161,7 @@ impl Client {
                 result.errors,
                 result.batch_id,
                 Duration::from_nanos(result.forward_time_ns),
+                "none".to_string(),
             )
         }))
     }

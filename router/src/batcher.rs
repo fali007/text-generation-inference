@@ -640,6 +640,7 @@ impl<'a> TokenProcessor<'a> {
             )
             .await;
         info!("Prefill took {prefill_time:?} for {batch_size} inputs, {batch_tokens} total tokens");
+        println!("Resp with prefill embeddings : {:?}", result);
         (result, prefill_time)
     }
 
@@ -687,7 +688,7 @@ impl<'a> TokenProcessor<'a> {
 
         let elapsed = start_time.elapsed();
         let result = match result {
-            Ok(Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration))) => {
+            Ok(Some((generated_tokens, input_tokens, errors, next_batch_id, forward_duration, _embedding))) => {
                 let pre_token_process_time = Instant::now();
                 self.process_input_tokens(input_tokens);
                 let completed_request_ids = self.process_next_tokens(generated_tokens, errors);

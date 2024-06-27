@@ -15,6 +15,7 @@ service GenerationService {
   rpc Tokenize (BatchedTokenizeRequest) returns (BatchedTokenizeResponse) {}
   // Model info
   rpc ModelInfo (ModelInfoRequest) returns (ModelInfoResponse) {}
+  rpc Embedding (SingleGenerationRequest) returns (EmbeddingResponse) {}
 }
 
 // ============================================================================================================
@@ -23,6 +24,10 @@ service GenerationService {
 enum DecodingMethod {
   GREEDY = 0;
   SAMPLE = 1;
+}
+
+message EmbeddingResponse {
+  string embedding = 1;
 }
 
 message BatchedGenerationRequest {

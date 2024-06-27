@@ -15,22 +15,9 @@ use tracing::{instrument, Span};
 use unicode_truncate::UnicodeTruncateStr;
 
 use crate::{
-    batcher::{InferError, InferResponse, ResponseStream, Times},
-    default_parameters,
-    pb::fmaas::{
-        generation_service_server::{GenerationService, GenerationServiceServer},
-        model_info_response::ModelKind,
-        BatchedGenerationRequest, BatchedGenerationResponse, BatchedTokenizeRequest,
-        BatchedTokenizeResponse, DecodingMethod, GenerationResponse, ModelInfoRequest,
-        ModelInfoResponse, Parameters, SingleGenerationRequest, StopReason,
-        StopReason::{Cancelled, Error, TokenLimit},
-        TokenizeResponse,
-    },
-    server::ServerState,
-    tokenizer::AsyncTokenizer,
-    tracing::ExtractTelemetryContext,
-    validation::{RequestSize, ValidationError},
-    GenerateParameters, GenerateRequest,
+    batcher::{InferError, InferResponse, ResponseStream, Times}, default_parameters, pb::fmaas::{
+        generation_service_server::{GenerationService, GenerationServiceServer}, model_info_response::ModelKind, BatchedGenerationRequest, BatchedGenerationResponse, BatchedTokenizeRequest, BatchedTokenizeResponse, DecodingMethod, EmbeddingResponse, GenerationResponse, ModelInfoRequest, ModelInfoResponse, Parameters, SingleGenerationRequest, StopReason::{self, Cancelled, Error, TokenLimit}, TokenizeResponse
+    }, queue::Entry, server::ServerState, tokenizer::AsyncTokenizer, tracing::ExtractTelemetryContext, validation::{RequestSize, ValidationError}, GenerateParameters, GenerateRequest
 };
 use crate::metrics::{increment_counter, increment_labeled_counter, observe_histogram};
 use crate::pb::fmaas::tokenize_response::Offset;
@@ -397,6 +384,17 @@ impl GenerationService for GenerationServicer {
             max_sequence_length: self.state.max_sequence_length as u32,
             max_new_tokens: self.state.max_new_tokens as u32,
         }))
+    }
+
+    async fn embedding(
+        &self,
+        request: Request<SingleGenerationRequest>
+    ) -> Result<Response<EmbeddingResponse>, Status> {
+        let start_time = Instant::now();
+        let sr = request.into_inner();
+        let (request_size, validated_request) = self.validate(sr.prefix_id, sr.params, vec![sr.request.unwrap().text], start_time).await?.pop().unwrap();
+        let embedding = self.state.batcher.get_embedding(Entry::new(validated_request, request_size.input_length, request_size.prefix_length, None, None)).await;
+        Ok(Response::new(EmbeddingResponse { embedding }))
     }
 }
 

@@ -1,3 +1,4 @@
+use text_generation_client::Request;
 use std::{
     cmp::max,
     future::Future,
@@ -61,6 +62,7 @@ pub(crate) struct Batcher {
     sender: Sender<Vec<Entry>>,
     /// Tokenizer
     decoder: Arc<Decoder>,
+    client: ShardedClient,
 }
 
 impl Batcher {
@@ -80,7 +82,7 @@ impl Batcher {
         // Spawn batching background task that contains all the inference logic
         tokio::spawn(
             std::panic::AssertUnwindSafe(batching_task(
-                client,
+                client.clone(),
                 max_waiting_tokens,
                 Queue::new(config, batch_type, receiver),
                 decoder.clone(),
@@ -93,7 +95,7 @@ impl Batcher {
             }),
         );
 
-        Self { sender, decoder }
+        Self { sender, decoder, client }
     }
 
     // Returns input if queue is full
@@ -108,6 +110,32 @@ impl Batcher {
             }
             TrySendError::Closed(_) => panic!("Queue closed"),
         })
+    }
+
+    pub async fn get_embedding(&self, entry: Entry) -> String {
+        let id : u64 = 0;
+        let request = Request {
+            id,
+            prefix_id: entry.request.prefix_id.clone().unwrap_or_default(),
+            inputs: entry.request.inputs.clone(),
+            input_length: entry.input_length as u32,
+            max_output_length: entry.request.parameters.max_new_tokens,
+            truncate: entry.request.parameters.truncate_input_tokens > 0,
+            parameters: Some((&entry.request.parameters).into()),
+            stream_response: entry.stream_tx.is_some(),
+            details: (&entry.request.parameters).into(),
+        };
+        let mut requests: Vec<Request> = Vec::new();
+        requests.push(request.clone());
+        let batch_tokens = request.input_length;
+        let batch = Batch {
+            id: id,
+            requests,
+            total_tokens: batch_tokens as u32,
+        };
+        let result = self.client.clone().prefill(batch, vec![]).await.unwrap().unwrap();
+        println!("{:?}", result.5);
+        result.5
     }
 
     /// Add a new request to the queue and return a future that will generate the text
